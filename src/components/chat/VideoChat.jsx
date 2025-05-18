@@ -8,6 +8,7 @@ import TextChat from './TextChat';
 const VideoChat = ({ mode }) => {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const streamInitializedRef = useRef(false);
 
   const [localStream, setLocalStream] = useState(null);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
@@ -23,8 +24,12 @@ const VideoChat = ({ mode }) => {
   const navigate = useNavigate(); 
   const [isCallActive, setIsCallActive] = useState(false);
 
+  // Initialize local stream only once
   useEffect(() => {
-    initLocalStream();
+    if (!streamInitializedRef.current) {
+      initLocalStream();
+      streamInitializedRef.current = true;
+    }
     return () => {
       if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
@@ -33,17 +38,14 @@ const VideoChat = ({ mode }) => {
     };
   }, []); 
   
+  // Handle video call when matched
   useEffect(() => {
-    // Only start video call if we have a local stream and we're matched with someone
-    if (localStream && matchDetails && matchDetails.partnerId) { 
-      console.log("starting video call")
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
-      }
+    if (localStream && matchDetails?.partnerId && !isCallActive) {
+      console.log("starting video call");
       startVideoCall(matchDetails.partnerId, localStream, remoteVideoRef.current);
       setIsCallActive(true);
     }
-  }, [localStream, matchDetails, startVideoCall]); // Added proper dependencies
+  }, [localStream, matchDetails, isCallActive, startVideoCall]);
 
   const initLocalStream = async () => {
     try {
@@ -59,7 +61,7 @@ const VideoChat = ({ mode }) => {
 
   useEffect(() => {
     let timerInterval;
-    if (!isPremium) {
+    if (!isPremium && isMatched) {
       timerInterval = setInterval(() => {
         setTimer(prev => {
           if (prev <= 1) {
@@ -74,7 +76,7 @@ const VideoChat = ({ mode }) => {
     return () => {
       if (timerInterval) clearInterval(timerInterval);
     };
-  }, [isPremium]);
+  }, [isPremium, isMatched]);
 
   const toggleVideo = () => {
     if (localStream) {
@@ -97,10 +99,10 @@ const VideoChat = ({ mode }) => {
   }; 
   
   const handleSkipMatch = () => { 
+    setIsCallActive(false);
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
-    setIsCallActive(false);
     next(mode);
   };
 
