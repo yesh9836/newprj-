@@ -37,6 +37,9 @@ const VideoChat = ({ mode }) => {
     // Only start video call if we have a local stream and we're matched with someone
     if (localStream && matchDetails && matchDetails.partnerId) { 
       console.log("starting video call")
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
+      }
       startVideoCall(matchDetails.partnerId, localStream, remoteVideoRef.current);
       setIsCallActive(true);
     }
@@ -94,6 +97,10 @@ const VideoChat = ({ mode }) => {
   }; 
   
   const handleSkipMatch = () => { 
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+    setIsCallActive(false);
     next(mode);
   };
 
@@ -145,9 +152,9 @@ const VideoChat = ({ mode }) => {
             ref={remoteVideoRef}
             autoPlay
             playsInline
-            muted={false}  // 👈 Do NOT mute remote video
-          
-            />
+            muted={false}
+            className="w-full h-full object-cover"
+          />
           </div> 
           {/* Local Video */}
           <div className="flex-1 bg-gray-800 flex items-center justify-center relative rounded-md overflow-hidden">
