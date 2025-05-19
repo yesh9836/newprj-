@@ -41,6 +41,7 @@ const VideoChat = ({ mode }) => {
   // Handle video call when matched
   useEffect(() => {
     if (localStream && matchDetails?.partnerId && !isCallActive) {
+       
       console.log("starting video call");
       startVideoCall(matchDetails.partnerId, localStream, remoteVideoRef.current);
       setIsCallActive(true);
