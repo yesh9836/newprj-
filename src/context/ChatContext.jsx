@@ -77,6 +77,11 @@ export const ChatProvider = ({ children }) => {
       cleanupMatch();
     });
 
+    socketInstance.on("disconect", () => {
+      cleanupMatch();
+      setIsConnecting(true);
+    });
+
     return socketInstance;
   };
 
@@ -90,12 +95,14 @@ export const ChatProvider = ({ children }) => {
   };
 
   const cleanupMatch = () => {
-    setIsMatched(false);
-    setMatchDetails(null);
     if (peerConnection) {
+      peerConnection.ontrack = null;
+      peerConnection.onicecandidate = null;
       peerConnection.close();
       setPeerConnection(null);
     }
+    setIsMatched(false);
+    setMatchDetails(null);
     callStartedRef.current = false;
     pendingCandidates.current = [];
   };
@@ -103,6 +110,7 @@ export const ChatProvider = ({ children }) => {
   const disconnectFromMatch = (mode) => {
     const socket = socketRef.current;
     if (socket && matchDetails) {
+      endVideoCall();
       socket.emit('disconnect-chat', matchDetails.partnerId, mode);
       cleanupMatch();
     }
@@ -111,8 +119,20 @@ export const ChatProvider = ({ children }) => {
   const next = (mode) => {
     const socket = socketRef.current;
     if (socket && matchDetails) {
+      endVideoCall();
       socket.emit('next', matchDetails.partnerId, mode);
       cleanupMatch();
+      
+      // Re-emit user details to find new match
+      if (user) {
+        setTimeout(() => {
+          socket.emit('user-details', {
+            gender: user.gender,
+            interest: user.interest,
+            mode
+          });
+        }, 500); // Small delay to ensure cleanup is complete
+      }
     }
   };
 
@@ -130,21 +150,28 @@ export const ChatProvider = ({ children }) => {
     if (!socket) return;
 
     try {
-      // Close existing peer connection if any
+      // Ensure cleanup of existing connection
       if (peerConnection) {
+        peerConnection.ontrack = null;
+        peerConnection.onicecandidate = null;
         peerConnection.close();
-        setPeerConnection(null);
       }
 
       const pc = new RTCPeerConnection(iceServers);
       setPeerConnection(pc);
 
       // Add local tracks
-      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      localStream.getTracks().forEach(track => {
+        try {
+          pc.addTrack(track, localStream);
+        } catch (error) {
+          console.error('Error adding track:', error);
+        }
+      });
 
       // Handle ICE candidates
       pc.onicecandidate = (event) => {
-        if (event.candidate) {
+        if (event.candidate && socket.connected) {
           socket.emit("ice-candidate", event.candidate, partnerId);
         }
       };
@@ -156,7 +183,7 @@ export const ChatProvider = ({ children }) => {
         }
       };
 
-      // Clean up existing socket listeners
+      // Remove existing listeners before adding new ones
       socket.off("video-offer");
       socket.off("video-answer");
       socket.off("ice-candidate");
@@ -189,11 +216,12 @@ export const ChatProvider = ({ children }) => {
         try {
           if (pc.signalingState === "have-local-offer") {
             await pc.setRemoteDescription(new RTCSessionDescription(answer));
-            // Process any pending ICE candidates
-            for (const candidate of pendingCandidates.current) {
-              await pc.addIceCandidate(candidate);
+            
+            // Process pending candidates after remote description is set
+            while (pendingCandidates.current.length > 0) {
+              const candidate = pendingCandidates.current.shift();
+              await pc.addIceCandidate(candidate).catch(console.error);
             }
-            pendingCandidates.current = [];
           }
         } catch (error) {
           console.error("Error applying answer:", error);
@@ -205,7 +233,7 @@ export const ChatProvider = ({ children }) => {
         try {
           const iceCandidate = new RTCIceCandidate(candidate);
           if (pc.remoteDescription && pc.remoteDescription.type) {
-            await pc.addIceCandidate(iceCandidate);
+            await pc.addIceCandidate(iceCandidate).catch(console.error);
           } else {
             pendingCandidates.current.push(iceCandidate);
           }
@@ -216,28 +244,24 @@ export const ChatProvider = ({ children }) => {
 
       // Handle end video
       socket.on("end-video", () => {
-        if (pc.signalingState !== "closed") {
-          pc.close();
-        }
-        setPeerConnection(null);
-        pendingCandidates.current = [];
+        cleanupMatch();
         if (remoteVideoElement) {
           remoteVideoElement.srcObject = null;
         }
       });
 
       // Create and send offer
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true
+      });
       await pc.setLocalDescription(offer);
       socket.emit("video-offer", offer, partnerId);
 
       return pc;
     } catch (error) {
       console.error('Error starting video call:', error);
-      if (peerConnection) {
-        peerConnection.close();
-        setPeerConnection(null);
-      }
+      cleanupMatch();
     }
   };
 
@@ -246,11 +270,7 @@ export const ChatProvider = ({ children }) => {
     if (socket && matchDetails) {
       socket.emit("end-video", matchDetails.partnerId);
     }
-    if (peerConnection) {
-      peerConnection.close();
-      setPeerConnection(null);
-    }
-    pendingCandidates.current = [];
+    cleanupMatch();
   };
 
   const value = {
