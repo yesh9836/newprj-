@@ -29,21 +29,25 @@ export const ChatProvider = ({ children }) => {
   const initializeSocket = (gender, interest, name, mode) => {
     if (socketRef.current) return socketRef.current;
 
-    const socketInstance = window.socket || io(
-      process.env.NODE_ENV === 'production'
-        ? 'https://buzzy-server-nu.vercel.app'
-        : 'http://localhost:3000',
-      {
-        transports: ['websocket'],
-        withCredentials: true,
-      }
-    );
+    const socketInstance = window.socket || io('http://localhost:3000', {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 10000,
+      withCredentials: true,
+    });
 
     if (!window.socket) {
       window.socket = socketInstance;
     }
 
     socketRef.current = socketInstance;
+
+    socketInstance.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+      setIsConnecting(false);
+    });
 
     socketInstance.on('connect', () => {
       console.log('Socket connected:', socketInstance.id);
