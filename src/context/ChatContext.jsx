@@ -59,11 +59,13 @@ export const ChatProvider = ({ children }) => {
       cleanupMatch();
       setIsConnecting(true);  
       if (user) {
-        socketInstance.emit('user-details', {
-          gender: user.gender,
-          interest: user.interest,
-          mode
-        });
+        setTimeout(() => {
+          socketInstance.emit('user-details', {
+            gender: user.gender,
+            interest: user.interest,
+            mode
+          });
+        }, 1000); // Increased delay to ensure proper cleanup
       }
     });
 
@@ -77,8 +79,8 @@ export const ChatProvider = ({ children }) => {
     });
 
     socketInstance.on("cleanup", () => {
-      setIsConnecting(true);
       cleanupMatch();
+      setIsConnecting(true);
     });
 
     socketInstance.on("disconect", () => {
@@ -100,11 +102,26 @@ export const ChatProvider = ({ children }) => {
 
   const cleanupMatch = () => {
     if (peerConnection) {
+      // Remove all event listeners
       peerConnection.ontrack = null;
       peerConnection.onicecandidate = null;
+      peerConnection.onsignalingstatechange = null;
+      peerConnection.oniceconnectionstatechange = null;
+      
+      // Close all transceivers
+      if (peerConnection.getTransceivers) {
+        peerConnection.getTransceivers().forEach(transceiver => {
+          if (transceiver.stop) {
+            transceiver.stop();
+          }
+        });
+      }
+
+      // Close the connection
       peerConnection.close();
       setPeerConnection(null);
     }
+    
     setIsMatched(false);
     setMatchDetails(null);
     callStartedRef.current = false;
@@ -127,15 +144,17 @@ export const ChatProvider = ({ children }) => {
       socket.emit('next', matchDetails.partnerId, mode);
       cleanupMatch();
       
-      // Re-emit user details to find new match
+      // Re-emit user details after a delay to ensure proper cleanup
       if (user) {
         setTimeout(() => {
-          socket.emit('user-details', {
-            gender: user.gender,
-            interest: user.interest,
-            mode
-          });
-        }, 500); // Small delay to ensure cleanup is complete
+          if (socket.connected) {
+            socket.emit('user-details', {
+              gender: user.gender,
+              interest: user.interest,
+              mode
+            });
+          }
+        }, 1000);
       }
     }
   };
@@ -156,13 +175,23 @@ export const ChatProvider = ({ children }) => {
     try {
       // Ensure cleanup of existing connection
       if (peerConnection) {
-        peerConnection.ontrack = null;
-        peerConnection.onicecandidate = null;
-        peerConnection.close();
+        cleanupMatch();
       }
 
       const pc = new RTCPeerConnection(iceServers);
       setPeerConnection(pc);
+
+      // Monitor connection state
+      pc.oniceconnectionstatechange = () => {
+        console.log("ICE Connection State:", pc.iceConnectionState);
+        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+          cleanupMatch();
+        }
+      };
+
+      pc.onsignalingstatechange = () => {
+        console.log("Signaling State:", pc.signalingState);
+      };
 
       // Add local tracks
       localStream.getTracks().forEach(track => {
@@ -212,6 +241,7 @@ export const ChatProvider = ({ children }) => {
           socket.emit("video-answer", answer, fromSocketId);
         } catch (error) {
           console.error("Error handling offer:", error);
+          cleanupMatch();
         }
       });
 
@@ -229,6 +259,7 @@ export const ChatProvider = ({ children }) => {
           }
         } catch (error) {
           console.error("Error applying answer:", error);
+          cleanupMatch();
         }
       });
 
@@ -248,10 +279,10 @@ export const ChatProvider = ({ children }) => {
 
       // Handle end video
       socket.on("end-video", () => {
-        cleanupMatch();
         if (remoteVideoElement) {
           remoteVideoElement.srcObject = null;
         }
+        cleanupMatch();
       });
 
       // Create and send offer
